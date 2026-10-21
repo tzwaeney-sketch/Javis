@@ -1,0 +1,431 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Jarvis">
+<meta name="theme-color" content="#03080f">
+<meta name="robots" content="noindex">
+<title>Jarvis</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Rajdhani:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+:root{
+  --void:#03080f; --panel:rgba(10,32,52,.7); --line:rgba(80,200,255,.22); --line-strong:rgba(110,220,255,.55);
+  --arc:#3fd6ff; --arc-soft:rgba(63,214,255,.14); --ink:#d9f3ff; --ink-dim:#7fa7bd; --ink-faint:#4d6f84;
+  --amber:#ffb547; --red:#ff5468; --green:#4dffb0;
+  --f-display:"Orbitron","Eurostile","Arial Narrow",sans-serif;
+  --f-body:"Rajdhani","Segoe UI","Helvetica Neue",Arial,sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--void);color:var(--ink)}
+body{font-family:var(--f-body);font-size:17px;line-height:1.45;
+  padding:env(safe-area-inset-top,0px) max(16px,env(safe-area-inset-right,0px)) env(safe-area-inset-bottom,0px) max(16px,env(safe-area-inset-left,0px));
+  background:radial-gradient(900px 600px at 50% 35%, rgba(63,214,255,.13), transparent 65%), var(--void);
+  display:flex;flex-direction:column;overflow-x:hidden}
+body::after{content:"";position:fixed;inset:0;pointer-events:none;
+  background:repeating-linear-gradient(0deg, rgba(63,214,255,.03) 0 1px, transparent 1px 3px),
+  linear-gradient(rgba(63,214,255,.045) 1px, transparent 1px) 0 0/44px 44px,
+  linear-gradient(90deg, rgba(63,214,255,.045) 1px, transparent 1px) 0 0/44px 44px}
+button,input,select{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--arc);outline-offset:2px}
+header{display:flex;justify-content:space-between;align-items:center;padding:14px 0;position:relative;z-index:2}
+.brand{font-family:var(--f-display);letter-spacing:.3em;font-size:14px;color:var(--arc)}
+.clock{font-family:var(--f-mono);font-size:12px;color:var(--ink-dim);letter-spacing:.1em}
+.gear{background:none;border:1px solid var(--line);padding:6px 10px;cursor:pointer;font-family:var(--f-mono);font-size:12px;letter-spacing:.1em;color:var(--ink-dim)}
+main{flex:1;display:grid;grid-template-rows:auto auto 1fr;justify-items:center;gap:14px;position:relative;z-index:1;min-height:0}
+.orb{width:min(64vw,300px);aspect-ratio:1;max-width:100%;position:relative;cursor:pointer;border:0;background:none;padding:0;margin-top:2vh;-webkit-tap-highlight-color:transparent}
+.orb svg{width:100%;height:100%;overflow:visible}
+.ring{transform-origin:150px 150px;animation:spin 20s linear infinite}
+.ring.r2{animation-duration:12s;animation-direction:reverse}
+.ring.r3{animation-duration:7s}
+.core{transform-origin:150px 150px;transition:transform .15s}
+@keyframes spin{to{transform:rotate(360deg)}}
+body[data-state="listen"] .ring{animation-duration:4s}
+body[data-state="listen"] .halo{stroke:var(--green)}
+body[data-state="think"] .ring{animation-duration:1.6s}
+body[data-state="speak"] .ring{animation-duration:3s}
+body[data-state="speak"] .core{animation:beat .5s ease-in-out infinite}
+@keyframes beat{50%{transform:scale(1.08)}}
+.state{font-family:var(--f-display);letter-spacing:.28em;font-size:13px;color:var(--arc);text-transform:uppercase;text-align:center;min-height:1.2em}
+.hint{font-family:var(--f-mono);font-size:11px;color:var(--ink-faint);text-align:center;letter-spacing:.06em}
+.feed{width:min(760px,100%);display:flex;flex-direction:column;gap:12px;overflow-y:auto;padding:4px 0 16px;min-height:0;max-height:100%}
+.msg{display:grid;gap:3px}
+.msg .who{font-family:var(--f-mono);font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--ink-faint)}
+.msg.me{justify-items:end;text-align:right}
+.msg.me .txt{color:var(--ink-dim)}
+.msg.ai .who{color:var(--arc)}
+.msg.ai .txt{border-left:2px solid var(--arc);padding-left:12px}
+.msg .txt{font-size:19px;white-space:pre-wrap;overflow-wrap:anywhere;max-width:62ch}
+.msg.interim .txt{color:var(--ink-faint);font-style:italic}
+.bar{position:relative;z-index:2;display:flex;gap:8px;padding:10px 0 14px;width:min(760px,100%);margin:0 auto}
+.bar input{flex:1;min-width:0;background:rgba(3,8,15,.7);border:1px solid var(--line-strong);padding:12px 14px;font-size:17px}
+.bar input:focus{outline:none;border-color:var(--arc)}
+.bar button{background:var(--arc);color:var(--void);border:0;padding:0 16px;font-family:var(--f-display);font-size:12px;letter-spacing:.16em;cursor:pointer}
+.chips{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;max-width:760px}
+.chips button{background:none;border:1px solid var(--line);color:var(--ink-dim);padding:4px 10px;cursor:pointer;font-size:15px}
+.chips button:hover{border-color:var(--arc);color:var(--ink)}
+/* Settings */
+.sheet{position:fixed;inset:0;z-index:10;background:rgba(3,8,15,.86);backdrop-filter:blur(6px);display:grid;place-items:center;
+  padding:max(16px,env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) max(16px,env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px))}
+.card{width:min(520px,100%);max-height:100%;overflow:auto;border:1px solid var(--line-strong);background:#06121f;padding:20px;display:grid;gap:14px}
+.card h2{margin:0;font-family:var(--f-display);font-size:15px;letter-spacing:.24em;color:var(--arc)}
+.card p{margin:0;color:var(--ink-dim);font-size:15px}
+.field{display:grid;gap:5px}
+.field label{font-family:var(--f-mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-dim)}
+.field input,.field select{background:rgba(3,8,15,.7);border:1px solid var(--line-strong);padding:10px 12px;width:100%}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.btn{background:var(--arc);color:var(--void);border:0;padding:10px 16px;font-family:var(--f-display);font-size:12px;letter-spacing:.16em;cursor:pointer}
+.btn.ghost{background:none;color:var(--ink);border:1px solid var(--line-strong)}
+.check{display:flex;gap:8px;align-items:center;font-size:15px;color:var(--ink-dim)}
+.err{color:var(--red);font-family:var(--f-mono);font-size:12px;min-height:1em}
+.small{font-family:var(--f-mono);font-size:11px;color:var(--ink-faint)}
+a{color:var(--arc)}
+@media (prefers-reduced-motion:reduce){.ring,.core{animation:none!important}}
+</style>
+</head>
+<body data-state="idle">
+<header>
+  <span class="brand">J·A·R·V·I·S</span>
+  <span class="clock" id="clock"></span>
+  <button class="gear" id="open-settings" type="button">⚙ Setup</button>
+</header>
+
+<main>
+  <button class="orb" id="orb" type="button" aria-label="Zum Sprechen tippen">
+    <svg viewBox="0 0 300 300" aria-hidden="true">
+      <defs>
+        <radialGradient id="g" cx="50%" cy="50%" r="50%">
+          <stop offset="0" stop-color="#e6fbff" stop-opacity=".95"/>
+          <stop offset=".35" stop-color="#3fd6ff" stop-opacity=".55"/>
+          <stop offset="1" stop-color="#3fd6ff" stop-opacity="0"/>
+        </radialGradient>
+      </defs>
+      <g class="core"><circle cx="150" cy="150" r="78" fill="url(#g)"/></g>
+      <g class="ring"><circle cx="150" cy="150" r="140" fill="none" stroke="#3fd6ff" stroke-opacity=".45" stroke-width="1.2" stroke-dasharray="2 8"/></g>
+      <g class="ring r2"><circle class="halo" cx="150" cy="150" r="122" fill="none" stroke="#3fd6ff" stroke-width="5" stroke-dasharray="120 30 18 30" stroke-opacity=".85"/></g>
+      <g class="ring r3"><circle cx="150" cy="150" r="104" fill="none" stroke="#bff3ff" stroke-width="1.5" stroke-dasharray="5 12" stroke-opacity=".7"/></g>
+      <circle cx="150" cy="150" r="86" fill="none" stroke="#3fd6ff" stroke-opacity=".35"/>
+    </svg>
+  </button>
+  <div>
+    <div class="state" id="state">Tippe zum Sprechen</div>
+    <div class="hint" id="hint">Daten: —</div>
+  </div>
+  <div class="feed" id="feed" aria-live="polite"></div>
+</main>
+
+<div class="chips" id="chips" style="margin:0 auto">
+  <button type="button">Was ist heute los?</button>
+  <button type="button">Wichtige Mails?</button>
+  <button type="button">Lage in der Welt</button>
+  <button type="button">Was gibt's in Dortmund?</button>
+</div>
+<form class="bar" id="bar" autocomplete="off">
+  <input id="text" type="text" placeholder="Oder hier tippen …" aria-label="Frage an Jarvis">
+  <button type="submit">Senden</button>
+</form>
+
+<div class="sheet" id="sheet" hidden>
+  <div class="card" role="dialog" aria-labelledby="set-h">
+    <h2 id="set-h">Setup</h2>
+    <p>Alles bleibt nur auf diesem Gerät gespeichert.</p>
+    <div class="field"><label for="pw">Daten-Passwort</label><input id="pw" type="password" autocomplete="current-password"></div>
+    <div class="field"><label for="key">Gemini API-Key</label><input id="key" type="password" autocomplete="off" placeholder="AIza…">
+      <span class="small">Kostenlos bei <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a></span></div>
+    <div class="field"><label for="voice">Stimme</label><select id="voice"></select>
+      <span class="small" id="voice-tip"></span></div>
+    <div class="field"><label for="rate">Tempo</label><input id="rate" type="range" min="0.8" max="1.3" step="0.05" value="1.05"></div>
+    <label class="check" for="convo"><input type="checkbox" id="convo" checked> Gesprächsmodus: nach jeder Antwort wieder zuhören</label>
+    <div class="row">
+      <button class="btn" id="save" type="button">Speichern</button>
+      <button class="btn ghost" id="test" type="button">Stimme testen</button>
+      <button class="btn ghost" id="close" type="button">Schließen</button>
+    </div>
+    <div class="err" id="set-err"></div>
+  </div>
+</div>
+
+<script>
+(function(){
+"use strict";
+const TZ = "Europe/Berlin";
+const MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"];
+const $ = id => document.getElementById(id);
+const store = {
+  get(k){ try { return localStorage.getItem("jarvis." + k); } catch(e){ return null; } },
+  set(k,v){ try { localStorage.setItem("jarvis." + k, v); } catch(e){} }
+};
+const fmt = (d,o) => new Intl.DateTimeFormat("de-DE", Object.assign({timeZone:TZ}, o)).format(d);
+
+let data = null, history = [], busy = false;
+
+setInterval(()=>{ $("clock").textContent = fmt(new Date(),{weekday:"short", day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit"}); }, 1000);
+
+function setState(s, label){ document.body.dataset.state = s; $("state").textContent = label; }
+function add(role, text, cls){
+  const m = document.createElement("div"); m.className = "msg " + (role === "user" ? "me" : "ai") + (cls ? " " + cls : "");
+  const w = document.createElement("span"); w.className = "who"; w.textContent = role === "user" ? "Sven" : "Jarvis";
+  const t = document.createElement("div"); t.className = "txt"; t.textContent = text;
+  m.append(w, t); $("feed").append(m); $("feed").scrollTop = $("feed").scrollHeight; return m;
+}
+
+/* ---------- Data (AES-GCM) ---------- */
+const b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+async function loadData(){
+  const pw = store.get("pw");
+  if (!pw){ $("hint").textContent = "Daten: Passwort fehlt (Setup)"; return; }
+  try {
+    const r = await fetch("data.enc.json?t=" + Date.now(), {cache:"no-store"});
+    if (!r.ok) throw new Error("Datei fehlt");
+    const enc = await r.json();
+    const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(pw), "PBKDF2", false, ["deriveKey"]);
+    const key = await crypto.subtle.deriveKey({name:"PBKDF2", hash:"SHA-256", salt:b64(enc.salt), iterations:enc.iter}, base, {name:"AES-GCM", length:256}, false, ["decrypt"]);
+    const plain = await crypto.subtle.decrypt({name:"AES-GCM", iv:b64(enc.iv)}, key, b64(enc.ct));
+    data = JSON.parse(new TextDecoder().decode(plain));
+    const at = data.updatedAt ? new Date(data.updatedAt) : null;
+    $("hint").textContent = "Daten: Stand " + (at ? fmt(at,{day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit"}) : "?");
+  } catch(e){
+    data = null;
+    $("hint").textContent = e && e.name === "OperationError" ? "Daten: falsches Passwort" : "Daten: nicht geladen (" + (e.message||"Fehler") + ")";
+  }
+}
+
+/* ---------- Voice out ---------- */
+const synth = window.speechSynthesis;
+function germanVoices(){ return synth ? synth.getVoices().filter(v => /^de(-|_|$)/i.test(v.lang)) : []; }
+function score(v){
+  const n = v.name.toLowerCase(); let s = 0;
+  if (/natural|neural|online/.test(n)) s += 50;
+  if (/premium/.test(n)) s += 45;
+  if (/enhanced|erweitert|verbessert/.test(n)) s += 40;
+  if (/google/.test(n)) s += 20;
+  if (/anna|helena|petra|katja|conrad|markus|yannick|amala|seraphina|florian/.test(n)) s += 10;
+  if (v.localService === false) s += 5;
+  if (/de-de/i.test(v.lang)) s += 3;
+  return s;
+}
+function pickVoice(){
+  const vs = germanVoices(); const saved = store.get("voice");
+  return vs.find(v => v.name === saved) || vs.sort((a,b)=>score(b)-score(a))[0] || null;
+}
+function fillVoices(){
+  const sel = $("voice"); const vs = germanVoices().sort((a,b)=>score(b)-score(a));
+  sel.replaceChildren();
+  vs.forEach(v => { const o = document.createElement("option"); o.value = v.name; o.textContent = v.name + (v.localService ? "" : " · online"); sel.append(o); });
+  const cur = pickVoice(); if (cur) sel.value = cur.name;
+  const best = vs[0] ? score(vs[0]) : 0;
+  $("voice-tip").textContent = !vs.length ? "Keine deutsche Stimme gefunden." :
+    best < 40 ? "Klingt blechern? iPhone/Mac: Einstellungen → Bedienungshilfen → Gesprochene Inhalte → Stimmen → Deutsch → z. B. „Anna (Premium)“ laden. Am PC: Microsoft Edge nutzen (Natural-Stimmen)." :
+    "Gute Stimme gefunden.";
+}
+if (synth){ fillVoices(); synth.onvoiceschanged = fillVoices; }
+
+function speakable(t){
+  return String(t).replace(/\*\*?|__|#+\s|`/g,"").replace(/https?:\/\/\S+/g,"").replace(/\s*[-•]\s+/g,". ").replace(/\b(\d{1,2}):(\d{2})\b/g,"$1 Uhr $2").replace(/ Uhr 00/g," Uhr");
+}
+function speak(text){
+  return new Promise(res => {
+    if (!synth){ res(); return; }
+    synth.cancel();
+    // Chrome bricht lange Texte ab: in Sätze teilen
+    const parts = speakable(text).match(/[^.!?]+[.!?]*/g) || [text];
+    const v = pickVoice(); const rate = Number(store.get("rate") || 1.05);
+    let i = 0;
+    setState("speak","Spreche …");
+    const next = () => {
+      if (i >= parts.length){ res(); return; }
+      const u = new SpeechSynthesisUtterance(parts[i++].trim());
+      u.lang = v ? v.lang : "de-DE"; if (v) u.voice = v; u.rate = rate; u.pitch = 1;
+      u.onend = next; u.onerror = () => res();
+      synth.speak(u);
+    };
+    next();
+  });
+}
+
+/* ---------- Voice in ---------- */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let rec = null, listening = false;
+function listen(){
+  if (!SR){ setState("idle","Spracheingabe nicht verfügbar – bitte Safari oder Chrome nutzen"); $("text").focus(); return; }
+  if (listening || busy) return;
+  if (synth) synth.cancel();
+  rec = new SR(); rec.lang = "de-DE"; rec.interimResults = true; rec.continuous = false; rec.maxAlternatives = 1;
+  let interimEl = null, finalText = "";
+  rec.onstart = () => { listening = true; setState("listen","Ich höre …"); };
+  rec.onresult = ev => {
+    let interim = "";
+    for (let i = ev.resultIndex; i < ev.results.length; i++){
+      const r = ev.results[i];
+      if (r.isFinal) finalText += r[0].transcript; else interim += r[0].transcript;
+    }
+    const shown = (finalText + " " + interim).trim();
+    if (!interimEl) interimEl = add("user", shown, "interim"); else interimEl.querySelector(".txt").textContent = shown;
+  };
+  rec.onerror = ev => {
+    listening = false;
+    const m = {"not-allowed":"Mikrofon nicht erlaubt – in den Browser-Einstellungen freigeben.","no-speech":"Nichts gehört.","audio-capture":"Kein Mikrofon gefunden.","network":"Spracherkennung braucht Internet."}[ev.error] || "Spracheingabe-Fehler: " + ev.error;
+    setState("idle", m);
+  };
+  rec.onend = () => {
+    listening = false;
+    if (interimEl) interimEl.remove();
+    const q = finalText.trim();
+    if (q) ask(q); else if (document.body.dataset.state === "listen") setState("idle","Tippe zum Sprechen");
+  };
+  try { rec.start(); } catch(e){ setState("idle","Spracheingabe konnte nicht starten"); }
+}
+$("orb").addEventListener("click", () => {
+  if (document.body.dataset.state === "speak"){ synth && synth.cancel(); setState("idle","Tippe zum Sprechen"); return; }
+  if (listening){ rec && rec.stop(); return; }
+  // iOS: Sprachausgabe mit Nutzer-Geste freischalten
+  if (synth && !window.__unlocked){ try { const u = new SpeechSynthesisUtterance(" "); u.volume = 0; synth.speak(u); } catch(e){} window.__unlocked = true; }
+  listen();
+});
+
+/* ---------- Brain ---------- */
+function context(){
+  const now = new Date();
+  const d = data || {};
+  const slim = {
+    jetzt: fmt(now,{weekday:"long", day:"numeric", month:"long", year:"numeric", hour:"2-digit", minute:"2-digit"}),
+    stand: d.updatedAt || null, lagebild: d.lagebild, wetter: d.weather, termine: d.calendar, erinnerungen: d.reminders,
+    mails: d.mails, nachrichten: d.news
+  };
+  let s = JSON.stringify(slim); if (s.length > 60000) s = s.slice(0, 60000);
+  return s;
+}
+function system(){
+  return "Du bist JARVIS, der persönliche Sprachassistent von Sven Albrecht (Projektingenieur bei DSW21 in Dortmund, wohnt in Dortmund-Scharnhorst, Frau Pia, Söhne Jonte und Hauke). " +
+  "Deine Antworten werden VORGELESEN: sprich natürlich, kurz (meist 2–4 Sätze), ohne Aufzählungszeichen, ohne Markdown, ohne Links, Uhrzeiten als '16 Uhr'. Ton: ruhig, souverän, leicht britisch-höflich wie ein Butler, aber auf Deutsch und nicht steif. " +
+  "Erfinde nichts. Nutze zuerst diese Daten (JSON, kann einige Stunden alt sein): " + context() +
+  " Wenn die Frage aktuelle Ereignisse betrifft, die nicht in den Daten stehen, nutze die Google-Suche, falls verfügbar, und nenne die Quelle kurz. Wenn du etwas nicht weißt, sag es. Du kannst keine Mails senden oder Termine anlegen.";
+}
+async function gemini(q){
+  const key = store.get("key");
+  if (!key) throw {code:"nokey"};
+  history.push({role:"user", parts:[{text:q}]});
+  if (history.length > 16) history = history.slice(-16);
+  while (history.length && history[0].role !== "user") history.shift();
+  const body = (withSearch) => JSON.stringify({
+    systemInstruction:{parts:[{text:system()}]},
+    contents: history,
+    tools: withSearch ? [{google_search:{}}] : undefined,
+    generationConfig:{temperature:0.6, maxOutputTokens:600}
+  });
+  let lastErr = null;
+  const startModel = store.get("model");
+  const order = startModel ? [startModel, ...MODELS.filter(m => m !== startModel)] : MODELS;
+  for (const model of order){
+    for (const withSearch of [true, false]){
+      try {
+        const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent", {
+          method:"POST", headers:{"Content-Type":"application/json", "x-goog-api-key": key}, body: body(withSearch)
+        });
+        const j = await r.json().catch(()=> ({}));
+        if (!r.ok){
+          lastErr = {code: r.status, msg: (j.error && j.error.message) || r.statusText};
+          if (r.status === 400 && withSearch) continue;      // Suche nicht erlaubt -> ohne
+          if (r.status === 401 || r.status === 403) throw {code:"key", msg:lastErr.msg};
+          break;                                               // 404/429/5xx -> nächstes Modell
+        }
+        const text = ((j.candidates||[])[0]?.content?.parts||[]).map(p => p.text||"").join("").trim();
+        if (!text){ lastErr = {code:"empty"}; break; }
+        store.set("model", model);
+        history.push({role:"model", parts:[{text}]});
+        return text;
+      } catch(e){
+        if (e && e.code === "key") { history.pop(); throw e; }
+        lastErr = {code:"net", msg: e && e.message}; break;
+      }
+    }
+  }
+  history.pop();
+  throw lastErr || {code:"fail"};
+}
+
+/* Offline-Antworten ohne KI */
+function local(q){
+  const d = data; const s = q.toLowerCase();
+  if (!d) return "Ich habe noch keine Daten. Bitte im Setup das Passwort eintragen.";
+  const now = new Date();
+  const iso = x => new Intl.DateTimeFormat("en-CA",{timeZone:TZ,year:"numeric",month:"2-digit",day:"2-digit"}).format(x);
+  const t0 = iso(now), t1 = iso(new Date(now.getTime()+864e5));
+  const evs = (d.calendar||[]);
+  const dayList = k => evs.filter(e => String(e.allDay ? e.start : iso(new Date(e.start))).slice(0,10) === k)
+    .map(e => e.allDay ? e.title : fmt(new Date(e.start),{hour:"2-digit",minute:"2-digit"}) + " Uhr " + e.title);
+  if (/termin|heute|morgen|kalender|los/.test(s)){
+    const a = dayList(t0), b = dayList(t1);
+    return (a.length ? "Heute: " + a.join(", ") + ". " : "Heute steht nichts mehr an. ") + (b.length ? "Morgen: " + b.join(", ") + "." : "");
+  }
+  if (/mail|post/.test(s)){
+    const m = (d.mails||[]).slice(0,4);
+    return m.length ? "Neueste Mails: " + m.map(x => (x.von||"").replace(/<.*>/,"").trim() + ": " + x.betreff).join(". ") + "." : "Keine Mails in den Daten.";
+  }
+  if (/einkauf|kaufen/.test(s)){
+    const e = (d.reminders||[]).filter(r => r.group === "Einkauf").map(r => r.title);
+    return e.length ? "Auf der Einkaufsliste: " + e.join(", ") + "." : "Die Einkaufsliste ist leer.";
+  }
+  if (/dortmund|scharnhorst/.test(s)){
+    const n = [...(d.news?.scharnhorst||[]), ...(d.news?.dortmund||[])].slice(0,4);
+    return n.length ? n.map(x => x.title).join(". ") + "." : "Keine Dortmund-Meldungen in den Daten.";
+  }
+  if (/welt|krieg|lage|ukraine|iran|israel|nachricht/.test(s)){
+    const k = (d.news?.konflikte||[]).slice(0,4);
+    return k.length ? k.map(x => x.region + ": " + x.title).join(". ") + "." : "Keine Lagemeldungen in den Daten.";
+  }
+  if (/wetter/.test(s)){ const w = d.weather?.today; return w ? "Heute " + w.desc + ", " + w.min + " bis " + w.max + " Grad." : "Keine Wetterdaten."; }
+  return d.lagebild || "Dazu habe ich ohne KI-Schlüssel keine Antwort.";
+}
+
+async function ask(q){
+  q = String(q||"").trim(); if (!q || busy) return;
+  busy = true; add("user", q);
+  setState("think","Denke nach …");
+  let text;
+  try { text = await gemini(q); }
+  catch(e){
+    const fallback = local(q);
+    const why = e.code === "nokey" ? "" : e.code === "key" ? " (Gemini-Key ungültig – Setup prüfen)" : e.code === 429 ? " (Gemini-Tageslimit erreicht)" : " (Gemini nicht erreichbar)";
+    text = fallback + (why ? why : "");
+  }
+  add("ai", text);
+  busy = false;
+  await speak(text.replace(/\s*\(Gemini.*\)$/,""));
+  setState("idle","Tippe zum Sprechen");
+  if ($("convo").checked && SR && document.visibilityState === "visible") setTimeout(listen, 250);
+}
+$("bar").addEventListener("submit", e => { e.preventDefault(); const v = $("text").value; $("text").value = ""; ask(v); });
+$("chips").querySelectorAll("button").forEach(b => b.addEventListener("click", () => ask(b.textContent)));
+
+/* ---------- Settings ---------- */
+function openSettings(){ $("pw").value = store.get("pw")||""; $("key").value = store.get("key")||""; $("rate").value = store.get("rate")||"1.05"; $("convo").checked = store.get("convo") !== "0"; fillVoices(); $("sheet").hidden = false; }
+$("open-settings").addEventListener("click", openSettings);
+$("close").addEventListener("click", () => $("sheet").hidden = true);
+$("test").addEventListener("click", () => { store.set("voice", $("voice").value); store.set("rate", $("rate").value); speak("Guten Tag, Sven. Alle Systeme sind bereit. Was kann ich für dich tun?").then(()=>setState("idle","Tippe zum Sprechen")); });
+$("save").addEventListener("click", async () => {
+  store.set("pw", $("pw").value.trim()); store.set("key", $("key").value.trim());
+  store.set("voice", $("voice").value); store.set("rate", $("rate").value); store.set("convo", $("convo").checked ? "1" : "0");
+  $("set-err").textContent = "Lade Daten …";
+  await loadData();
+  $("set-err").textContent = data ? "" : $("hint").textContent;
+  if (data) $("sheet").hidden = true;
+});
+$("convo").checked = store.get("convo") !== "0";
+
+/* ---------- Boot ---------- */
+(async () => {
+  await loadData();
+  if (!store.get("pw") || !store.get("key")) openSettings();
+  else add("ai", "Systeme online. Tippe auf den Kern und sprich mit mir.");
+  setInterval(loadData, 15 * 60 * 1000);
+})();
+})();
+</script>
+</body>
+</html>
