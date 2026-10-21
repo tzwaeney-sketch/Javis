@@ -484,7 +484,8 @@ function listen(){
   };
   rec.onerror = ev => {
     listening = false;
-    const m = {"not-allowed":"Mikrofon nicht erlaubt – in den Browser-Einstellungen freigeben.","no-speech":"Nichts gehört.","audio-capture":"Kein Mikrofon gefunden.","network":"Spracherkennung braucht Internet."}[ev.error] || "Spracheingabe-Fehler: " + ev.error;
+    if (ev.error === "aborted" || ev.error === "no-speech"){ setState("idle","Tippe zum Sprechen"); return; }
+    const m = {"not-allowed":"Mikrofon nicht erlaubt – in den Browser-Einstellungen freigeben.","audio-capture":"Kein Mikrofon gefunden.","network":"Spracherkennung braucht Internet.","service-not-allowed":"Spracherkennung aus – Siri & Diktieren in iOS aktivieren."}[ev.error] || "Spracheingabe-Fehler: " + ev.error;
     setState("idle", m);
   };
   rec.onend = () => {
@@ -544,7 +545,11 @@ async function post(model, bodyObj){
     } catch(e){ last = {code:"net", msg:"Netzwerk/CORS (" + ep + ")"}; continue; }
     if (r.ok){ store.set("ep", ep); return j; }
     last = {code:r.status, msg:((j.error && j.error.message) || r.statusText || "").slice(0,400), ep};
-    if (r.status === 429) break;          // Limit: anderer Endpunkt hilft nicht
+    if (r.status === 429){
+      const wait = Number(String(last.msg).match(/retry in ([\d.]+)s/i)?.[1] || 0);
+      if (!bodyObj.__retried && wait > 0 && wait <= 12){ bodyObj.__retried = true; setKi("KI: Limit – warte " + Math.ceil(wait) + " s …"); await new Promise(r => setTimeout(r, wait*1000 + 300)); const b2 = Object.assign({}, bodyObj); delete b2.__retried; return post(model, b2); }
+      break;
+    }
   }
   throw last || {code:"fail", msg:"unbekannt"};
 }
@@ -567,7 +572,8 @@ async function gemini(q){
   while (order.length){
     const model = order.shift();
     if (tried.has(model)) continue; tried.add(model);
-    for (const withSearch of [true, false]){
+    const needSearch = /aktuell|neueste|news|nachricht|heute passiert|gerade|live|ergebnis|spielstand|kurs|preis|wer ist|was ist mit|stand der|krieg|wahl/i.test(q) && store.get("nosearch") !== "1";
+    for (const withSearch of (needSearch ? [true, false] : [false])){
       try {
         const j = await post(model, mk(withSearch));
         const text = ((j.candidates||[])[0]?.content?.parts||[]).map(p => p.text||"").join("").trim();
@@ -580,14 +586,18 @@ async function gemini(q){
         lastErr = e;
         const sug = String(e.msg||"").match(/models\/([A-Za-z0-9.\-_]+)\s+for the latest/);
         if (sug && !tried.has(sug[1])) order.unshift(sug[1]);   // Google nennt den Nachfolger
-        if (e.code === 400 && withSearch) continue;   // Suche nicht erlaubt -> ohne Suche
+        if ((e.code === 400 || e.code === 429) && withSearch){ if (e.code === 400) store.set("nosearch","1"); continue; }   // Suche nicht erlaubt/limitiert -> ohne Suche
         break;                                         // nächstes Modell
       }
     }
     if (lastErr && lastErr.code === 429) break;
   }
   history.pop();
-  setKi("KI-Fehler " + (lastErr ? lastErr.code + ": " + (lastErr.msg||"") : "") + " [" + [...tried].join(", ") + "]");
+  const c = lastErr && lastErr.code;
+  setKi(c === 429 ? "KI: Google-Limit erreicht – in 1–2 Min. wieder, bei Tageslimit morgen" :
+        (c === 401 || c === 403) ? "KI: Key abgelehnt (" + c + ")" :
+        c === 404 ? "KI: Modell nicht gefunden [" + [...tried].join(", ") + "]" :
+        "KI-Fehler " + (c||"") + ": " + String((lastErr && lastErr.msg)||"").slice(0,60));
   throw lastErr || {code:"fail"};
 }
 
@@ -627,7 +637,7 @@ async function geminiVoice(text){
         curSrc = src; setState("speak","Spreche …"); src.start();
       });
     } catch(e){
-      if (e && e.code === 429) break;
+      if (e && (e.code === 429 || e.code === 403)) break;
       const sug = String((e && e.msg)||"").match(/models\/([A-Za-z0-9.\-_]+)\s+for the latest/);
       if (sug && /tts/i.test(sug[1]) && !tried.has(sug[1])) order.unshift(sug[1]);
     }
@@ -685,7 +695,7 @@ async function ask(q){
   busy = false;
   await speak(text.replace(/\s*\(Gemini.*\)$/,""));
   setState("idle","Tippe zum Sprechen");
-  if ($("convo").checked && SR && document.visibilityState === "visible") setTimeout(listen, 250);
+  if ($("convo").checked && SR && document.visibilityState === "visible") setTimeout(listen, 700);
 }
 $("bar").addEventListener("submit", e => { e.preventDefault(); const v = $("text").value; $("text").value = ""; ask(v); });
 $("chips").querySelectorAll("button").forEach(b => b.addEventListener("click", () => ask(b.textContent)));
@@ -718,7 +728,7 @@ $("convo").checked = store.get("convo") !== "0";
     // Absichtlich NICHT aus der Adresse entfernen: So nimmt „Zum Home-Bildschirm“ die Einrichtung mit (eigener Speicher der Home-App auf iOS).
   }
   await loadData();
-  if (store.get("kistatus")) $("ki").textContent = store.get("kistatus");
+  const ks = store.get("kistatus"); if (ks && /online/.test(ks)) $("ki").textContent = ks;
   if (!store.get("pw")) openSettings();
   else add("ai", "Systeme online. Tippe auf den Kern und sprich mit mir.");
   setInterval(loadData, 15 * 60 * 1000);
