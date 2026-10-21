@@ -421,6 +421,15 @@ $("convo").checked = store.get("convo") !== "0";
 
 /* ---------- Boot ---------- */
 (async () => {
+  // Persönlicher Einrichtungs-Link: #s=<base64 JSON {p,k}> – wird nie an einen Server gesendet und sofort aus der Adresse entfernt
+  if (location.hash.startsWith("#s=")){
+    try {
+      const cfg = JSON.parse(decodeURIComponent(escape(atob(location.hash.slice(3)))));
+      if (cfg.p) store.set("pw", cfg.p);
+      if (cfg.k) store.set("key", cfg.k);
+    } catch(e){}
+    history.replaceState(null, "", location.pathname + location.search);
+  }
   await loadData();
   if (!store.get("pw") || !store.get("key")) openSettings();
   else add("ai", "Systeme online. Tippe auf den Kern und sprich mit mir.");
