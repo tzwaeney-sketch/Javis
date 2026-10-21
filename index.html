@@ -241,7 +241,7 @@ a{color:var(--arc)}
 (function(){
 "use strict";
 const TZ = "Europe/Berlin";
-const MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"];
+const MODELS = ["gemini-3.8-flash", "gemini-flash-latest", "gemini-2.5-flash"];
 const $ = id => document.getElementById(id);
 const store = {
   get(k){ try { return localStorage.getItem("jarvis." + k); } catch(e){ return null; } },
@@ -532,7 +532,7 @@ function endpointOrder(key){
   const def = String(key).startsWith("AQ.") ? ["vertex","studio"] : ["studio","vertex"];
   return saved ? [saved, ...def.filter(e => e !== saved)] : def;
 }
-function setKi(t){ store.set("kistatus", t); const h = $("ki"); if (h) h.textContent = t; }
+function setKi(t){ t = String(t).slice(0,110); store.set("kistatus", t); const h = $("ki"); if (h) h.textContent = t; }
 async function post(model, bodyObj){
   const key = store.get("key");
   let last = null;
@@ -543,7 +543,7 @@ async function post(model, bodyObj){
       j = await r.json().catch(()=> ({}));
     } catch(e){ last = {code:"net", msg:"Netzwerk/CORS (" + ep + ")"}; continue; }
     if (r.ok){ store.set("ep", ep); return j; }
-    last = {code:r.status, msg:((j.error && j.error.message) || r.statusText || "").slice(0,160), ep};
+    last = {code:r.status, msg:((j.error && j.error.message) || r.statusText || "").slice(0,400), ep};
     if (r.status === 429) break;          // Limit: anderer Endpunkt hilft nicht
   }
   throw last || {code:"fail", msg:"unbekannt"};
@@ -562,8 +562,11 @@ async function gemini(q){
   });
   let lastErr = null;
   const startModel = store.get("model");
-  const order = startModel ? [startModel, ...MODELS.filter(m => m !== startModel)] : MODELS;
-  for (const model of order){
+  const order = startModel ? [startModel, ...MODELS.filter(m => m !== startModel)] : MODELS.slice();
+  const tried = new Set();
+  while (order.length){
+    const model = order.shift();
+    if (tried.has(model)) continue; tried.add(model);
     for (const withSearch of [true, false]){
       try {
         const j = await post(model, mk(withSearch));
@@ -575,6 +578,8 @@ async function gemini(q){
         return text;
       } catch(e){
         lastErr = e;
+        const sug = String(e.msg||"").match(/models\/([A-Za-z0-9.\-_]+)\s+for the latest/);
+        if (sug && !tried.has(sug[1])) order.unshift(sug[1]);   // Google nennt den Nachfolger
         if (e.code === 400 && withSearch) continue;   // Suche nicht erlaubt -> ohne Suche
         break;                                         // nächstes Modell
       }
@@ -582,12 +587,12 @@ async function gemini(q){
     if (lastErr && lastErr.code === 429) break;
   }
   history.pop();
-  setKi("KI-Fehler " + (lastErr ? lastErr.code + ": " + (lastErr.msg||"") : ""));
+  setKi("KI-Fehler " + (lastErr ? lastErr.code + ": " + (lastErr.msg||"") : "") + " [" + [...tried].join(", ") + "]");
   throw lastErr || {code:"fail"};
 }
 
 /* Natürliche KI-Stimme über Gemini TTS (fällt auf Gerätestimme zurück) */
-const TTS_MODELS = ["gemini-2.5-flash-preview-tts", "gemini-2.5-flash-tts", "gemini-2.5-pro-preview-tts"];
+const TTS_MODELS = ["gemini-3.8-flash-tts", "gemini-3.8-flash-preview-tts", "gemini-flash-tts-latest", "gemini-2.5-flash-preview-tts", "gemini-2.5-flash-tts"];
 let actx = null, curSrc = null;
 function audioCtx(){
   try { if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)({sampleRate:24000}); if (actx.state === "suspended") actx.resume(); } catch(e){}
@@ -601,8 +606,11 @@ async function geminiVoice(text){
     generationConfig:{responseModalities:["AUDIO"], speechConfig:{voiceConfig:{prebuiltVoiceConfig:{voiceName: voice}}}}
   };
   const saved = store.get("ttsmodel");
-  const order = saved ? [saved, ...TTS_MODELS.filter(m => m !== saved)] : TTS_MODELS;
-  for (const m of order){
+  if (store.get("ttsdead") && Date.now() - Number(store.get("ttsdead")) < 6*3600e3) return false;  // nicht jedes Mal neu probieren
+  const order = saved ? [saved, ...TTS_MODELS.filter(m => m !== saved)] : TTS_MODELS.slice();
+  const tried = new Set();
+  while (order.length){
+    const m = order.shift(); if (tried.has(m)) continue; tried.add(m);
     try {
       const j = await post(m, body);
       const part = ((j.candidates||[])[0]?.content?.parts||[]).find(p => p.inlineData && p.inlineData.data);
@@ -618,8 +626,13 @@ async function geminiVoice(text){
         src.onended = () => { curSrc = null; res(true); };
         curSrc = src; setState("speak","Spreche …"); src.start();
       });
-    } catch(e){ if (e && e.code === 429) break; }
+    } catch(e){
+      if (e && e.code === 429) break;
+      const sug = String((e && e.msg)||"").match(/models\/([A-Za-z0-9.\-_]+)\s+for the latest/);
+      if (sug && /tts/i.test(sug[1]) && !tried.has(sug[1])) order.unshift(sug[1]);
+    }
   }
+  store.set("ttsdead", String(Date.now()));
   return false;
 }
 
@@ -684,7 +697,7 @@ $("close").addEventListener("click", () => $("sheet").hidden = true);
 $("test").addEventListener("click", () => { audioCtx(); store.set("voice", $("voice").value); store.set("rate", $("rate").value); store.set("gvoice", $("gvoice").value); store.set("tts", $("tts").checked ? "1" : "0"); if ($("key").value.trim()) store.set("key", $("key").value.trim()); speak("Guten Tag, Sven. Alle Systeme sind bereit. Was kann ich für dich tun?").then(()=>setState("idle","Tippe zum Sprechen")); });
 $("save").addEventListener("click", async () => {
   store.set("pw", $("pw").value.trim()); store.set("key", $("key").value.trim());
-  store.set("gvoice", $("gvoice").value); store.set("tts", $("tts").checked ? "1" : "0"); store.set("ep",""); store.set("model",""); store.set("ttsmodel","");
+  store.set("gvoice", $("gvoice").value); store.set("tts", $("tts").checked ? "1" : "0"); store.set("ep",""); store.set("model",""); store.set("ttsmodel",""); store.set("ttsdead","");
   store.set("voice", $("voice").value); store.set("rate", $("rate").value); store.set("convo", $("convo").checked ? "1" : "0");
   $("set-err").textContent = "Lade Daten …";
   await loadData();
