@@ -191,6 +191,7 @@ a{color:var(--arc)}
     <div>
       <div class="state" id="state">Tippe zum Sprechen</div>
       <div class="hint" id="hint">Daten: —</div>
+      <div class="hint" id="ki">KI: noch nicht genutzt</div>
       <div class="wx" id="wx"></div>
     </div>
     <div class="chips" id="chips">
@@ -223,6 +224,9 @@ a{color:var(--arc)}
     <div class="field"><label for="voice">Stimme</label><select id="voice"></select>
       <span class="small" id="voice-tip"></span></div>
     <div class="field"><label for="rate">Tempo</label><input id="rate" type="range" min="0.8" max="1.3" step="0.05" value="1.05"></div>
+    <div class="field"><label for="gvoice">KI-Stimme (Gemini)</label><select id="gvoice">
+      <option value="Charon">Charon – ruhig, männlich</option><option value="Orus">Orus – fest, männlich</option><option value="Iapetus">Iapetus – klar, männlich</option><option value="Algieba">Algieba – weich, männlich</option><option value="Kore">Kore – klar, weiblich</option><option value="Aoede">Aoede – leicht, weiblich</option></select></div>
+    <label class="check" for="tts"><input type="checkbox" id="tts" checked> Natürliche KI-Stimme nutzen (sonst Gerätestimme)</label>
     <label class="check" for="convo"><input type="checkbox" id="convo" checked> Gesprächsmodus: nach jeder Antwort wieder zuhören</label>
     <div class="row">
       <button class="btn" id="save" type="button">Speichern</button>
@@ -434,7 +438,12 @@ if (synth){ fillVoices(); synth.onvoiceschanged = fillVoices; }
 function speakable(t){
   return String(t).replace(/\*\*?|__|#+\s|`/g,"").replace(/https?:\/\/\S+/g,"").replace(/\s*[-•]\s+/g,". ").replace(/\b(\d{1,2}):(\d{2})\b/g,"$1 Uhr $2").replace(/ Uhr 00/g," Uhr");
 }
-function speak(text){
+async function speak(text){
+  setState("think","Bereite Stimme vor …");
+  if (await geminiVoice(speakable(text))) return;
+  return speakDevice(text);
+}
+function speakDevice(text){
   return new Promise(res => {
     if (!synth){ res(); return; }
     synth.cancel();
@@ -487,7 +496,8 @@ function listen(){
   try { rec.start(); } catch(e){ setState("idle","Spracheingabe konnte nicht starten"); }
 }
 $("orb").addEventListener("click", () => {
-  if (document.body.dataset.state === "speak"){ synth && synth.cancel(); setState("idle","Tippe zum Sprechen"); return; }
+  audioCtx();
+  if (document.body.dataset.state === "speak"){ synth && synth.cancel(); try { curSrc && curSrc.stop(); } catch(e){} setState("idle","Tippe zum Sprechen"); return; }
   if (listening){ rec && rec.stop(); return; }
   // iOS: Sprachausgabe mit Nutzer-Geste freischalten
   if (synth && !window.__unlocked){ try { const u = new SpeechSynthesisUtterance(" "); u.volume = 0; synth.speak(u); } catch(e){} window.__unlocked = true; }
@@ -512,17 +522,43 @@ function system(){
   "Erfinde nichts. Nutze zuerst diese Daten (JSON, kann einige Stunden alt sein): " + context() +
   " Wenn die Frage aktuelle Ereignisse betrifft, die nicht in den Daten stehen, nutze die Google-Suche, falls verfügbar, und nenne die Quelle kurz. Wenn du etwas nicht weißt, sag es. Du kannst keine Mails senden oder Termine anlegen.";
 }
+/* Zwei Google-Adressen: AI Studio (Keys "AIza…") und Vertex AI Express (Keys "AQ.…") */
+const EP = {
+  studio: m => "https://generativelanguage.googleapis.com/v1beta/models/" + m + ":generateContent",
+  vertex: m => "https://aiplatform.googleapis.com/v1/publishers/google/models/" + m + ":generateContent"
+};
+function endpointOrder(key){
+  const saved = store.get("ep");
+  const def = String(key).startsWith("AQ.") ? ["vertex","studio"] : ["studio","vertex"];
+  return saved ? [saved, ...def.filter(e => e !== saved)] : def;
+}
+function setKi(t){ store.set("kistatus", t); const h = $("ki"); if (h) h.textContent = t; }
+async function post(model, bodyObj){
+  const key = store.get("key");
+  let last = null;
+  for (const ep of endpointOrder(key)){
+    let r, j;
+    try {
+      r = await fetch(EP[ep](model), {method:"POST", headers:{"Content-Type":"application/json", "x-goog-api-key": key}, body: JSON.stringify(bodyObj)});
+      j = await r.json().catch(()=> ({}));
+    } catch(e){ last = {code:"net", msg:"Netzwerk/CORS (" + ep + ")"}; continue; }
+    if (r.ok){ store.set("ep", ep); return j; }
+    last = {code:r.status, msg:((j.error && j.error.message) || r.statusText || "").slice(0,160), ep};
+    if (r.status === 429) break;          // Limit: anderer Endpunkt hilft nicht
+  }
+  throw last || {code:"fail", msg:"unbekannt"};
+}
 async function gemini(q){
   const key = store.get("key");
   if (!key) throw {code:"nokey"};
   history.push({role:"user", parts:[{text:q}]});
   if (history.length > 16) history = history.slice(-16);
   while (history.length && history[0].role !== "user") history.shift();
-  const body = (withSearch) => JSON.stringify({
+  const mk = withSearch => ({
     systemInstruction:{parts:[{text:system()}]},
     contents: history,
-    tools: withSearch ? [{google_search:{}}] : undefined,
-    generationConfig:{temperature:0.6, maxOutputTokens:600}
+    tools: withSearch ? [{googleSearch:{}}] : undefined,
+    generationConfig:{temperature:0.6, maxOutputTokens:700}
   });
   let lastErr = null;
   const startModel = store.get("model");
@@ -530,29 +566,61 @@ async function gemini(q){
   for (const model of order){
     for (const withSearch of [true, false]){
       try {
-        const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent", {
-          method:"POST", headers:{"Content-Type":"application/json", "x-goog-api-key": key}, body: body(withSearch)
-        });
-        const j = await r.json().catch(()=> ({}));
-        if (!r.ok){
-          lastErr = {code: r.status, msg: (j.error && j.error.message) || r.statusText};
-          if (r.status === 400 && withSearch) continue;      // Suche nicht erlaubt -> ohne
-          if (r.status === 401 || r.status === 403) throw {code:"key", msg:lastErr.msg};
-          break;                                               // 404/429/5xx -> nächstes Modell
-        }
+        const j = await post(model, mk(withSearch));
         const text = ((j.candidates||[])[0]?.content?.parts||[]).map(p => p.text||"").join("").trim();
-        if (!text){ lastErr = {code:"empty"}; break; }
+        if (!text){ lastErr = {code:"empty", msg:"leere Antwort"}; break; }
         store.set("model", model);
+        setKi("KI: online · " + model + (store.get("ep")==="vertex" ? " · Vertex" : ""));
         history.push({role:"model", parts:[{text}]});
         return text;
       } catch(e){
-        if (e && e.code === "key") { history.pop(); throw e; }
-        lastErr = {code:"net", msg: e && e.message}; break;
+        lastErr = e;
+        if (e.code === 400 && withSearch) continue;   // Suche nicht erlaubt -> ohne Suche
+        break;                                         // nächstes Modell
       }
     }
+    if (lastErr && lastErr.code === 429) break;
   }
   history.pop();
+  setKi("KI-Fehler " + (lastErr ? lastErr.code + ": " + (lastErr.msg||"") : ""));
   throw lastErr || {code:"fail"};
+}
+
+/* Natürliche KI-Stimme über Gemini TTS (fällt auf Gerätestimme zurück) */
+const TTS_MODELS = ["gemini-2.5-flash-preview-tts", "gemini-2.5-flash-tts", "gemini-2.5-pro-preview-tts"];
+let actx = null, curSrc = null;
+function audioCtx(){
+  try { if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)({sampleRate:24000}); if (actx.state === "suspended") actx.resume(); } catch(e){}
+  return actx;
+}
+async function geminiVoice(text){
+  if (store.get("tts") === "0" || !store.get("key")) return false;
+  const voice = store.get("gvoice") || "Charon";
+  const body = {
+    contents:[{parts:[{text: "Sprich ruhig, souverän und natürlich wie ein persönlicher Assistent, auf Deutsch: " + text}]}],
+    generationConfig:{responseModalities:["AUDIO"], speechConfig:{voiceConfig:{prebuiltVoiceConfig:{voiceName: voice}}}}
+  };
+  const saved = store.get("ttsmodel");
+  const order = saved ? [saved, ...TTS_MODELS.filter(m => m !== saved)] : TTS_MODELS;
+  for (const m of order){
+    try {
+      const j = await post(m, body);
+      const part = ((j.candidates||[])[0]?.content?.parts||[]).find(p => p.inlineData && p.inlineData.data);
+      if (!part) continue;
+      store.set("ttsmodel", m);
+      const raw = Uint8Array.from(atob(part.inlineData.data), c => c.charCodeAt(0));
+      const rate = Number((part.inlineData.mimeType||"").match(/rate=(\d+)/)?.[1] || 24000);
+      const ctx = audioCtx(); if (!ctx) return false;
+      const n = raw.length >> 1, buf = ctx.createBuffer(1, n, rate), ch = buf.getChannelData(0), dv = new DataView(raw.buffer);
+      for (let i = 0; i < n; i++) ch[i] = dv.getInt16(i*2, true) / 32768;
+      return await new Promise(res => {
+        const src = ctx.createBufferSource(); src.buffer = buf; src.connect(ctx.destination);
+        src.onended = () => { curSrc = null; res(true); };
+        curSrc = src; setState("speak","Spreche …"); src.start();
+      });
+    } catch(e){ if (e && e.code === 429) break; }
+  }
+  return false;
 }
 
 /* Offline-Antworten ohne KI */
@@ -597,7 +665,7 @@ async function ask(q){
   try { text = await gemini(q); }
   catch(e){
     const fallback = local(q);
-    const why = e.code === "nokey" ? "" : e.code === "key" ? " (Gemini-Key ungültig – Setup prüfen)" : e.code === 429 ? " (Gemini-Tageslimit erreicht)" : " (Gemini nicht erreichbar)";
+    const why = e.code === "nokey" ? " (kein Gemini-Key)" : (e.code === 401 || e.code === 403) ? " (Gemini-Key abgelehnt)" : e.code === 429 ? " (Gemini-Limit erreicht)" : " (Gemini nicht erreichbar)";
     text = fallback + (why ? why : "");
   }
   add("ai", text);
@@ -610,12 +678,13 @@ $("bar").addEventListener("submit", e => { e.preventDefault(); const v = $("text
 $("chips").querySelectorAll("button").forEach(b => b.addEventListener("click", () => ask(b.textContent)));
 
 /* ---------- Settings ---------- */
-function openSettings(){ $("pw").value = store.get("pw")||""; $("key").value = store.get("key")||""; $("rate").value = store.get("rate")||"1.05"; $("convo").checked = store.get("convo") !== "0"; fillVoices(); $("sheet").hidden = false; }
+function openSettings(){ $("gvoice").value = store.get("gvoice")||"Charon"; $("tts").checked = store.get("tts") !== "0"; $("pw").value = store.get("pw")||""; $("key").value = store.get("key")||""; $("rate").value = store.get("rate")||"1.05"; $("convo").checked = store.get("convo") !== "0"; fillVoices(); $("sheet").hidden = false; }
 $("open-settings").addEventListener("click", openSettings);
 $("close").addEventListener("click", () => $("sheet").hidden = true);
-$("test").addEventListener("click", () => { store.set("voice", $("voice").value); store.set("rate", $("rate").value); speak("Guten Tag, Sven. Alle Systeme sind bereit. Was kann ich für dich tun?").then(()=>setState("idle","Tippe zum Sprechen")); });
+$("test").addEventListener("click", () => { audioCtx(); store.set("voice", $("voice").value); store.set("rate", $("rate").value); store.set("gvoice", $("gvoice").value); store.set("tts", $("tts").checked ? "1" : "0"); if ($("key").value.trim()) store.set("key", $("key").value.trim()); speak("Guten Tag, Sven. Alle Systeme sind bereit. Was kann ich für dich tun?").then(()=>setState("idle","Tippe zum Sprechen")); });
 $("save").addEventListener("click", async () => {
   store.set("pw", $("pw").value.trim()); store.set("key", $("key").value.trim());
+  store.set("gvoice", $("gvoice").value); store.set("tts", $("tts").checked ? "1" : "0"); store.set("ep",""); store.set("model",""); store.set("ttsmodel","");
   store.set("voice", $("voice").value); store.set("rate", $("rate").value); store.set("convo", $("convo").checked ? "1" : "0");
   $("set-err").textContent = "Lade Daten …";
   await loadData();
@@ -636,6 +705,7 @@ $("convo").checked = store.get("convo") !== "0";
     // Absichtlich NICHT aus der Adresse entfernen: So nimmt „Zum Home-Bildschirm“ die Einrichtung mit (eigener Speicher der Home-App auf iOS).
   }
   await loadData();
+  if (store.get("kistatus")) $("ki").textContent = store.get("kistatus");
   if (!store.get("pw")) openSettings();
   else add("ai", "Systeme online. Tippe auf den Kern und sprich mit mir.");
   setInterval(loadData, 15 * 60 * 1000);
