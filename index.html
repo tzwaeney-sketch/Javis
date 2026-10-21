@@ -22,6 +22,7 @@
   color-scheme:dark;
 }
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 html,body{height:100%;margin:0;background:var(--void);color:var(--ink)}
 body{font-family:var(--f-body);font-size:17px;line-height:1.45;
   padding:env(safe-area-inset-top,0px) max(16px,env(safe-area-inset-right,0px)) env(safe-area-inset-bottom,0px) max(16px,env(safe-area-inset-left,0px));
@@ -413,8 +414,8 @@ $("save").addEventListener("click", async () => {
   store.set("voice", $("voice").value); store.set("rate", $("rate").value); store.set("convo", $("convo").checked ? "1" : "0");
   $("set-err").textContent = "Lade Daten …";
   await loadData();
-  $("set-err").textContent = data ? "" : $("hint").textContent;
-  if (data) $("sheet").hidden = true;
+  $("sheet").hidden = true;
+  if (!data) add("ai", "Gespeichert. " + $("hint").textContent + " – du kannst trotzdem schon mit mir sprechen.");
 });
 $("convo").checked = store.get("convo") !== "0";
 
