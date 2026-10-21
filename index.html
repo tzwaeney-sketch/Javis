@@ -612,7 +612,7 @@ async function geminiVoice(text){
   if (store.get("tts") === "0" || !store.get("key")) return false;
   const voice = store.get("gvoice") || "Charon";
   const body = {
-    contents:[{parts:[{text: "Sprich ruhig, souverän und natürlich wie ein persönlicher Assistent, auf Deutsch: " + text}]}],
+    contents:[{parts:[{text: text}]}],
     generationConfig:{responseModalities:["AUDIO"], speechConfig:{voiceConfig:{prebuiltVoiceConfig:{voiceName: voice}}}}
   };
   const saved = store.get("ttsmodel");
@@ -677,7 +677,7 @@ function local(q){
     return k.length ? k.map(x => x.region + ": " + x.title).join(". ") + "." : "Keine Lagemeldungen in den Daten.";
   }
   if (/wetter/.test(s)){ const w = d.weather?.today; return w ? "Heute " + w.desc + ", " + w.min + " bis " + w.max + " Grad." : "Keine Wetterdaten."; }
-  return d.lagebild || "Dazu habe ich ohne KI-Schlüssel keine Antwort.";
+  return "Meine KI macht gerade eine Pause, Google hat das Anfragelimit erreicht. In ein bis zwei Minuten bin ich wieder voll da. Bis dahin kann ich dir Termine, Mails, Einkauf, Wetter, Dortmund oder die Weltlage nennen.";
 }
 
 async function ask(q){
@@ -689,7 +689,7 @@ async function ask(q){
   catch(e){
     const fallback = local(q);
     const why = e.code === "nokey" ? " (kein Gemini-Key)" : (e.code === 401 || e.code === 403) ? " (Gemini-Key abgelehnt)" : e.code === 429 ? " (Gemini-Limit erreicht)" : " (Gemini nicht erreichbar)";
-    text = fallback + (why ? why : "");
+    text = /Pause/.test(fallback) ? fallback : fallback + (why ? why : "");
   }
   add("ai", text);
   busy = false;
