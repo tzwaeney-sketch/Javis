@@ -633,10 +633,10 @@ $("convo").checked = store.get("convo") !== "0";
       if (cfg.p) store.set("pw", cfg.p);
       if (cfg.k) store.set("key", cfg.k);
     } catch(e){}
-    window.history.replaceState(null, "", location.pathname + location.search);
+    // Absichtlich NICHT aus der Adresse entfernen: So nimmt „Zum Home-Bildschirm“ die Einrichtung mit (eigener Speicher der Home-App auf iOS).
   }
   await loadData();
-  if (!store.get("pw") || !store.get("key")) openSettings();
+  if (!store.get("pw")) openSettings();
   else add("ai", "Systeme online. Tippe auf den Kern und sprich mit mir.");
   setInterval(loadData, 15 * 60 * 1000);
 })();
