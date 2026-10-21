@@ -91,6 +91,12 @@ main.center>div:not(.feed):not(.chips){width:100%}
 .err{color:var(--red);font-family:var(--f-mono);font-size:12px;min-height:1em}
 .small{font-family:var(--f-mono);font-size:11px;color:var(--ink-faint)}
 a{color:var(--arc)}
+.live-btn{font-family:var(--f-display);font-size:13px;letter-spacing:.2em;padding:12px 22px;cursor:pointer;background:var(--arc-soft);border:1px solid var(--arc);color:var(--ink);text-transform:uppercase;box-shadow:0 0 18px rgba(63,214,255,.25)}
+.live-btn[aria-pressed="true"]{background:rgba(255,84,104,.18);border-color:var(--red);box-shadow:0 0 22px rgba(255,84,104,.35)}
+body[data-state="live"] .ring{animation-duration:3s}
+body[data-state="live"] .halo{stroke:var(--green)}
+body[data-state="live-speak"] .ring{animation-duration:2s}
+body[data-state="live-speak"] .core{animation:beat .45s ease-in-out infinite}
 /* Dashboard */
 .layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.25fr) minmax(0,1fr);gap:16px;align-items:start;max-width:1500px;margin:0 auto;position:relative;z-index:1}
 .side{display:grid;gap:16px;min-width:0}
@@ -194,6 +200,7 @@ a{color:var(--arc)}
       <div class="hint" id="ki">KI: noch nicht genutzt</div>
       <div class="wx" id="wx"></div>
     </div>
+    <button class="live-btn" id="live" type="button">◉ Live-Gespräch starten</button>
     <div class="chips" id="chips">
   <button type="button">Was ist heute los?</button>
   <button type="button">Wichtige Mails?</button>
@@ -497,6 +504,7 @@ function listen(){
   try { rec.start(); } catch(e){ setState("idle","Spracheingabe konnte nicht starten"); }
 }
 $("orb").addEventListener("click", () => {
+  if (Live.on){ stopLive("Gespräch beendet"); return; }
   audioCtx();
   if (document.body.dataset.state === "speak"){ synth && synth.cancel(); try { curSrc && curSrc.stop(); } catch(e){} setState("idle","Tippe zum Sprechen"); return; }
   if (listening){ rec && rec.stop(); return; }
@@ -699,6 +707,143 @@ async function ask(q){
 }
 $("bar").addEventListener("submit", e => { e.preventDefault(); const v = $("text").value; $("text").value = ""; ask(v); });
 $("chips").querySelectorAll("button").forEach(b => b.addEventListener("click", () => ask(b.textContent)));
+
+
+/* ---------- Gemini Live (Echtzeit-Gespräch) ---------- */
+const LIVE_MODELS = ["gemini-3.8-flash-live", "gemini-live-3.8-flash", "gemini-3.8-flash-native-audio", "gemini-2.5-flash-native-audio-preview-12-2025", "gemini-2.5-flash-native-audio-preview-09-2025", "gemini-live-2.5-flash-preview"];
+const Live = { ws:null, micCtx:null, outCtx:null, stream:null, proc:null, nextT:0, sources:[], on:false, userEl:null, aiEl:null, model:null };
+function b64FromBytes(u8){ let s = ""; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); }
+async function liveModels(){
+  const key = store.get("key"), list = [];
+  const saved = store.get("livemodel"); if (saved) list.push(saved);
+  try {
+    const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=300", {headers:{"x-goog-api-key": key}});
+    if (r.ok){
+      const j = await r.json();
+      (j.models||[]).filter(m => (m.supportedGenerationMethods||[]).includes("bidiGenerateContent"))
+        .map(m => m.name.replace(/^models\//,""))
+        .sort((a,b) => (/native-audio/.test(b) - /native-audio/.test(a)) || b.localeCompare(a))
+        .forEach(m => list.push(m));
+    }
+  } catch(e){}
+  LIVE_MODELS.forEach(m => list.push(m));
+  return [...new Set(list)];
+}
+function liveUrl(){
+  const key = encodeURIComponent(store.get("key"));
+  return "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=" + key;
+}
+function liveSystem(){
+  return "Du bist JARVIS, der persönliche Sprachassistent von Sven Albrecht (Projektingenieur bei DSW21 in Dortmund, wohnt in Dortmund-Scharnhorst, Frau Pia, Söhne Jonte und Hauke). " +
+    "Du führst ein gesprochenes Echtzeit-Gespräch auf Deutsch: kurz, natürlich, ruhig und souverän wie ein Butler, ohne Aufzählungen. Erfinde nichts. " +
+    "Das hier ist alles, was gerade auf Svens Dashboard steht (Termine, Erinnerungen, Mails, Wetter, Nachrichten, Krisenlage) – nutze es für deine Antworten und lies Inhalte daraus vor, wenn er danach fragt: " + context();
+}
+function openLive(model){
+  return new Promise((resolve, reject) => {
+    let ws;
+    try { ws = new WebSocket(liveUrl()); } catch(e){ reject({msg:"WebSocket: " + e.message}); return; }
+    let done = false;
+    const timer = setTimeout(() => { if (!done){ done = true; try{ws.close();}catch(e){} reject({msg:"Zeitüberschreitung"}); } }, 12000);
+    ws.onopen = () => ws.send(JSON.stringify({setup:{
+      model: "models/" + model,
+      generationConfig:{responseModalities:["AUDIO"], speechConfig:{voiceConfig:{prebuiltVoiceConfig:{voiceName: store.get("gvoice") || "Charon"}}}},
+      systemInstruction:{parts:[{text: liveSystem()}]},
+      inputAudioTranscription:{}, outputAudioTranscription:{}
+    }}));
+    ws.onmessage = async ev => {
+      const txt = typeof ev.data === "string" ? ev.data : await (ev.data.text ? ev.data.text() : new Response(ev.data).text());
+      let msg; try { msg = JSON.parse(txt); } catch(e){ return; }
+      if (!done && msg.setupComplete){ done = true; clearTimeout(timer); resolve(ws); return; }
+      if (done) onLiveMessage(msg);
+    };
+    ws.onclose = ev => { clearTimeout(timer); if (!done){ done = true; reject({code:ev.code, msg: ev.reason || ("Verbindung geschlossen " + ev.code)}); } else if (Live.on) stopLive("Verbindung beendet" + (ev.reason ? ": " + ev.reason.slice(0,90) : "")); };
+    ws.onerror = () => {};
+  });
+}
+function playPcm(b64, rate){
+  const ctx = Live.outCtx; if (!ctx) return;
+  const raw = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+  const n = raw.length >> 1, buf = ctx.createBuffer(1, n, rate), ch = buf.getChannelData(0), dv = new DataView(raw.buffer);
+  for (let i = 0; i < n; i++) ch[i] = dv.getInt16(i*2, true) / 32768;
+  const src = ctx.createBufferSource(); src.buffer = buf; src.connect(ctx.destination);
+  const t = Math.max(ctx.currentTime + 0.02, Live.nextT); src.start(t); Live.nextT = t + buf.duration;
+  Live.sources.push(src); src.onended = () => { Live.sources = Live.sources.filter(x => x !== src); if (!Live.sources.length && Live.on) setState("live","Ich höre zu …"); };
+  setState("live-speak","Spreche …");
+}
+function onLiveMessage(msg){
+  const sc = msg.serverContent; if (!sc) return;
+  if (sc.interrupted){ Live.sources.forEach(s => { try{s.stop();}catch(e){} }); Live.sources = []; Live.nextT = 0; setState("live","Ich höre zu …"); }
+  if (sc.inputTranscription && sc.inputTranscription.text){
+    if (!Live.userEl) Live.userEl = add("user", "");
+    const t = Live.userEl.querySelector(".txt"); t.textContent = (t.textContent + sc.inputTranscription.text).replace(/\s+/g," ").trimStart();
+  }
+  for (const p of ((sc.modelTurn||{}).parts||[])){
+    if (p.inlineData && p.inlineData.data){ Live.userEl = null; playPcm(p.inlineData.data, Number((p.inlineData.mimeType||"").match(/rate=(\d+)/)?.[1] || 24000)); }
+  }
+  if (sc.outputTranscription && sc.outputTranscription.text){
+    if (!Live.aiEl) Live.aiEl = add("ai", "");
+    const t = Live.aiEl.querySelector(".txt"); t.textContent = (t.textContent + sc.outputTranscription.text).replace(/\s+/g," ").trimStart();
+  }
+  if (sc.turnComplete){ Live.aiEl = null; Live.userEl = null; }
+}
+async function startMic(){
+  Live.stream = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true, noiseSuppression:true, autoGainControl:true, channelCount:1}});
+  const ctx = Live.micCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (ctx.state === "suspended") await ctx.resume();
+  const srcNode = ctx.createMediaStreamSource(Live.stream);
+  const proc = Live.proc = ctx.createScriptProcessor(4096, 1, 1);
+  const ratio = ctx.sampleRate / 16000;
+  proc.onaudioprocess = e => {
+    if (!Live.ws || Live.ws.readyState !== 1) return;
+    const inp = e.inputBuffer.getChannelData(0), outLen = Math.floor(inp.length / ratio), pcm = new Int16Array(outLen);
+    for (let i = 0; i < outLen; i++){ const v = Math.max(-1, Math.min(1, inp[Math.floor(i * ratio)])); pcm[i] = v < 0 ? v * 0x8000 : v * 0x7fff; }
+    Live.ws.send(JSON.stringify({realtimeInput:{audio:{data: b64FromBytes(new Uint8Array(pcm.buffer)), mimeType:"audio/pcm;rate=16000"}}}));
+  };
+  const mute = ctx.createGain(); mute.gain.value = 0;
+  srcNode.connect(proc); proc.connect(mute); mute.connect(ctx.destination);
+}
+function stopLive(note){
+  Live.on = false;
+  try { Live.proc && Live.proc.disconnect(); } catch(e){}
+  try { Live.stream && Live.stream.getTracks().forEach(t => t.stop()); } catch(e){}
+  try { Live.micCtx && Live.micCtx.close(); } catch(e){}
+  try { Live.ws && Live.ws.readyState <= 1 && Live.ws.close(); } catch(e){}
+  Live.sources.forEach(s => { try{s.stop();}catch(e){} }); Live.sources = [];
+  Live.ws = Live.proc = Live.stream = Live.micCtx = null; Live.nextT = 0;
+  $("live").setAttribute("aria-pressed","false"); $("live").textContent = "◉ Live-Gespräch starten";
+  setState("idle", note || "Tippe zum Sprechen");
+}
+$("live").addEventListener("click", async () => {
+  if (Live.on || $("live").getAttribute("aria-pressed") === "true"){ stopLive("Gespräch beendet"); return; }
+  if (!store.get("key")){ openSettings(); return; }
+  try { synth && synth.cancel(); } catch(e){}
+  $("live").setAttribute("aria-pressed","true"); $("live").textContent = "■ Gespräch beenden";
+  setState("think","Verbinde …");
+  try { Live.outCtx = Live.outCtx || new (window.AudioContext || window.webkitAudioContext)({sampleRate:24000}); if (Live.outCtx.state === "suspended") await Live.outCtx.resume(); } catch(e){}
+  const models = await liveModels();
+  let ws = null, lastErr = null;
+  for (const m of models){
+    try { setState("think","Verbinde … " + m); ws = await openLive(m); Live.model = m; store.set("livemodel", m); break; }
+    catch(e){
+      lastErr = e;
+      const sug = String(e.msg||"").match(/models\/([A-Za-z0-9.\-_]+)/g);
+      if (/quota|exceeded|RESOURCE_EXHAUSTED/i.test(e.msg||"")) break;
+    }
+  }
+  if (!ws){
+    const m = String((lastErr && lastErr.msg) || "");
+    setKi(/quota|exceeded|RESOURCE_EXHAUSTED/i.test(m) ? "Live: Google-Limit erreicht" : "Live-Fehler: " + m.slice(0,90));
+    stopLive("Live-Gespräch nicht möglich");
+    return;
+  }
+  Live.ws = ws; Live.on = true;
+  try { await startMic(); }
+  catch(e){ stopLive(e && e.name === "NotAllowedError" ? "Mikrofon nicht erlaubt – in Safari für die Seite freigeben" : "Mikrofon-Fehler"); return; }
+  setKi("Live: verbunden · " + Live.model);
+  setState("live","Ich höre zu …");
+  ws.send(JSON.stringify({clientContent:{turns:[{role:"user", parts:[{text:"Begrüße mich kurz und frag, was du für mich tun kannst."}]}], turnComplete:true}}));
+});
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden" && Live.on) stopLive("Gespräch beendet"); });
 
 /* ---------- Settings ---------- */
 function openSettings(){ $("gvoice").value = store.get("gvoice")||"Charon"; $("tts").checked = store.get("tts") !== "0"; $("pw").value = store.get("pw")||""; $("key").value = store.get("key")||""; $("rate").value = store.get("rate")||"1.05"; $("convo").checked = store.get("convo") !== "0"; fillVoices(); $("sheet").hidden = false; }
